@@ -1,6 +1,62 @@
 language: node_js
 sudo: false
-node_js:
-- "0.12"
-- "4"
-- "5"
+
+# Seal: Travis' default npm cache would restore a node_modules resolved
+# against the live registry; always install fresh from the time machine.
+cache: false
+
+# Seal: resolve devDependencies as of the 1.12.3 release (2016-04-05); the
+# live registry now serves deps that break Node 0.12/4/5 (EMISSINGARG,
+# ES2018 syntax in psl, jscs "undefined is not a function").
+before_install:
+  - npm config set registry https://:2016-04-05T19%3A21%3A37.716Z@time-machines-npm.sealsecurity.io/
+
+jobs:
+  include:
+    # Upstream legs: default `npm install` + `npm test` (grunt && grunt test)
+    - node_js: "0.12"
+    - node_js: "4"
+    - node_js: "5"
+
+    # Seal: the real jQuery suite is the browser QUnit suite (test/index.html,
+    # test/unit/*.js). Build dist/ under Node 5, then drive headless Chrome
+    # with puppeteer-core (Node 20, isolated in /tmp/driver), one page per
+    # module like upstream's testswarm runs; PHP serves test/data/*.php.
+    - name: "QUnit browser suite (headless Chrome)"
+      node_js: "5"
+      addons:
+        chrome: stable
+      install:
+        - npm install
+      before_script:
+        - ./node_modules/.bin/grunt
+        - >-
+          if ! command -v php; then
+          sudo apt-get update -qq && sudo apt-get install -y php-cli;
+          fi
+        - php --version
+        - nvm install 20 && nvm use 20
+        - node --version
+        - >-
+          mkdir -p /tmp/driver && cd /tmp/driver && npm init -y &&
+          npm install --registry=https://registry.npmjs.org/ puppeteer-core
+        - cd "$TRAVIS_BUILD_DIR"
+        # Several workers: a single-process PHP server starves iframe fixtures
+        - >-
+          PHP_CLI_SERVER_WORKERS=10 php -S 127.0.0.1:8000 -t .
+          > /tmp/php.log 2>&1 &
+        - >-
+          for i in $(seq 1 30); do
+          curl -sf -o /dev/null http://127.0.0.1:8000/test/index.html && break;
+          sleep 1; done
+        - curl -sf -o /dev/null http://127.0.0.1:8000/test/data/name.php
+      script:
+        # SEAL_SKIP_TESTS ("||"-separated "module: test name"), env-caused only:
+        # ajax #14379 - sync XHR from an unload handler is disallowed in Chrome 80+
+        - >-
+          SEAL_SKIP_TESTS="ajax: #14379 - jQuery.ajax() on unload"
+          CHROME_PATH="$(which google-chrome || which google-chrome-stable || which chromium-browser)"
+          NODE_PATH=/tmp/driver/node_modules
+          node test/seal-browser-runner.js
+      after_failure:
+        - tail -n 100 /tmp/php.log
