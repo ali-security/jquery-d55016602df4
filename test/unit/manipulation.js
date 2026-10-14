@@ -2606,6 +2606,32 @@ QUnit.asyncTest( "Insert script with data-URI (gh-1887)", 1, function( assert ) 
 	}, 100 );
 } );
 
+// Support: IE <=9 only
+// IE <=9 drops <option> tags inserted outside of a <select>, so it still needs the wrapper.
+QUnit[ jQuery.support.option ? "test" : "skip" ]( "<option> is not wrapped in a <select> (gh-4647)", function( assert ) {
+
+	assert.expect( 4 );
+
+	// Without the <select> wrapper, a stray </select> cannot break out of the parsing context
+	var html = "<option>a</option></select><b>b</b>",
+		div = jQuery( "<div></div>" ).appendTo( "#qunit-fixture" );
+
+	function nodeNames( nodes ) {
+		return jQuery.map( jQuery.makeArray( nodes ), function( node ) {
+			return node.nodeName.toLowerCase();
+		} );
+	}
+
+	assert.deepEqual( nodeNames( jQuery( html ) ), [ "option", "b" ],
+		"jQuery(html) parses <option> in place" );
+	assert.deepEqual( nodeNames( jQuery.parseHTML( html ) ), [ "option", "b" ],
+		"jQuery.parseHTML parses <option> in place" );
+	assert.deepEqual( nodeNames( div.html( html )[ 0 ].childNodes ), [ "option", "b" ],
+		".html() parses <option> in place" );
+	assert.deepEqual( nodeNames( div.empty().append( html )[ 0 ].childNodes ), [ "option", "b" ],
+		".append() parses <option> in place" );
+} );
+
 QUnit.test( "Sanitized HTML doesn't get unsanitized", function( assert ) {
 
 	var container,
@@ -2613,7 +2639,7 @@ QUnit.test( "Sanitized HTML doesn't get unsanitized", function( assert ) {
 		oldIos = /iphone os (?:8|9|10|11|12)_/i.test( navigator.userAgent ),
 		done = assert.async();
 
-	assert.expect( oldIos ? 11 : 12 );
+	assert.expect( oldIos ? 12 : 13 );
 
 	Globals.register( "xss" );
 	window.xss = sinon.spy();
@@ -2645,11 +2671,14 @@ QUnit.test( "Sanitized HTML doesn't get unsanitized", function( assert ) {
 	sanitizedTest( "<img alt=\"<x\" title=\"\" src=\"/><img src=url404 onerror=xss(9)>\">" );
 	sanitizedTest( "<noscript/><img src=url404 onerror=xss(10)>" );
 
+	// <option> must not be parsed inside a <select> wrapper (gh-4647)
+	sanitizedTest( "<option><style></option></select><img src=url404 onerror=xss(11)></style>" );
+
 	// Support: iOS 8 - 12 only.
 	// Old iOS parses `<noembed>` tags differently, executing this code. This is no
 	// different to native behavior on that OS, though, so just accept it.
 	if ( !oldIos ) {
-		sanitizedTest( "<noembed><noembed/><img src=url404 onerror=xss(11)>" );
+		sanitizedTest( "<noembed><noembed/><img src=url404 onerror=xss(12)>" );
 	}
 
 	setTimeout( function() {
